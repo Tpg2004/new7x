@@ -1,0 +1,5 @@
+Dish Name,Weekly Orders,Ingredients,Ingredient Cost,Avg Prep Time,Ingredient Waste,Ingredient Shelf Life,Profit Margin,Day-wise Trend,Seasonal Item
+Avocado Toast,6,"Avocado, Bread, Lemon",₹100,10 mins,Avocado - 30%,Avocado - 2 days,₹120,"Mon, Wed, Sun",Yes
+Veg Burger,25,"Bun, Patty, Lettuce",₹60,8 mins,Lettuce - 15%,Lettuce - 3 days,₹80,"Daily (peak: Fri, Sat)",No
+Paneer Tikka,10,"Paneer, Spices, Onion",₹90,12 mins,Paneer - 10%,Paneer - 4 days,₹110,"Thu, Fri",No
+Lemon Soda,3,"Lemon, Sugar, Soda",₹20,5 mins,Lemon - 40%,Lemon - 5 days,₹25,Sun only,Yes
