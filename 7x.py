@@ -1,146 +1,133 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+import altair as alt
+from PIL import Image
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import torch
 
-# Load and preprocess data
+# Set up page
+st.set_page_config(page_title="Nomora AI", layout="wide", page_icon="🍽️")
+
+# Centered Logo
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.image("https://raw.githubusercontent.com/Tpg2004/nomora-ai/main/assets/nomoraig.jpeg", width=150)
+
+st.title("Nomora AI")
+st.markdown("#### 🍄 Smart Menu Insights to Reduce Food Waste & Boost Efficiency")
+st.markdown("---")
+
+# Load CSVs safely
+@st.cache_data
 def load_data():
-    ingredients_df = pd.read_csv("ingredient_waste.csv")
-    dishes_df = pd.read_csv("dish_sales.csv")
-    
-    # Clean and transform dish data
-    dishes_df['Ingredients'] = dishes_df['Ingredients'].str.split(", ")
-    
-    # Extract numerical values from currency columns
-    dishes_df['Ingredient Cost'] = dishes_df['Ingredient Cost'].str.extract(r'₹(\d+)').astype(int)
-    dishes_df['Profit Margin'] = dishes_df['Profit Margin'].str.extract(r'₹(\d+)').astype(int)
-    
-    # Parse waste percentages
-    dishes_df['Primary Waste Ingredient'] = dishes_df['Ingredient Waste'].str.split(" - ").str[0]
-    dishes_df['Waste Percentage'] = dishes_df['Ingredient Waste'].str.split(" - ").str[1].str.replace("%", "").astype(float)
-    
-    return dishes_df, ingredients_df
+    dishes = pd.read_csv("data/dish_sales.csv")
+    waste = pd.read_csv("data/ingredient_waste.csv")
+    return dishes, waste
 
-dishes_df, ingredients_df = load_data()
+dishes_df, waste_df = load_data()
 
-# Nomora AI Engine
-class NomoraAI:
-    def get_low_performers(self, df):
-        return df[(df['Weekly Orders'] < 10) & (df['Waste Percentage'] > 20)]
+# Dish Performance Section
+st.subheader("📉 Low-Performing Dishes")
+low_performers = dishes_df[dishes_df['Weekly Orders'] < 30].sort_values(by='Weekly Orders')
+st.write("These dishes had low orders. Consider removing or reworking them:")
+st.dataframe(low_performers[['Dish Name', 'Weekly Orders', 'Profit Margin', 'Ingredient Cost']])
 
-    def get_high_waste_ingredients(self, df):
-        return df.sort_values('Avg Waste %', ascending=False).head(3)
+# Waste Section
+st.subheader("🗑️ High-Waste Ingredients")
+high_waste = waste_df.sort_values(by='waste_kg', ascending=False).head(5)
+chart = alt.Chart(high_waste).mark_bar().encode(
+    x=alt.X('ingredient', sort='-y'),
+    y='waste_kg',
+    color=alt.value('orange')
+).properties(width=600, height=300)
+st.altair_chart(chart)
+st.write("Top wasted ingredients to focus on repurposing or reducing.")
 
-    def get_high_margin_overlap(self, df):
-        df['Overlap Score'] = df['Ingredients'].apply(lambda x: len(set(x)))
-        return df.sort_values(['Profit Margin', 'Overlap Score'], ascending=[False, False])
+# Suggested Recipes
+st.subheader("🍽️ Suggested New Dishes Using Wasted Ingredients")
+suggested_dishes = {
+    "Creamy Mushroom Soup": ["Mushrooms", "Cream", "Onion"],
+    "Stuffed Bell Peppers": ["Bell Peppers", "Rice", "Cheese"],
+    "Veggie Frittata": ["Spinach", "Eggs", "Cheese"]
+}
+for dish, ingredients in suggested_dishes.items():
+    st.markdown(f"**{dish}** – Uses: _{', '.join(ingredients)}_")
 
-    def suggest_new_dishes(self, waste_df):
-        suggestions = waste_df.set_index('Ingredient')['Suggested Action'].to_dict()
-        return {ing: [s.strip() for s in sug.split("; ")] for ing, sug in suggestions.items()}
+# Ingredient Overlap
+st.subheader("🔁 High-Margin Dishes with Ingredient Overlap")
+common_ingredients = dishes_df['Ingredients'].str.split(', ').explode().value_counts().reset_index()
+common_ingredients.columns = ['Ingredient', 'Dish Count']
+st.dataframe(common_ingredients.head(10))
 
-# Chatbot Logic
-import difflib
+# Load Mini LLM Model
+@st.cache_resource
+def load_local_llm():
+    tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-small")
+    model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-small")
+    return tokenizer, model
 
-# Smart matching helper
-def match_query(query, keywords):
-    return any(any(difflib.get_close_matches(word, query.split(), cutoff=0.7)) for word in keywords)
+tokenizer, model = load_local_llm()
 
-# Updated chatbot logic
-def handle_query(query, ai, dishes_df, ingredients_df):
-    response = {"title": "", "content": "", "visual": None}
-    
-    if match_query(query, ["remove", "low-selling", "high-waste", "cut dish"]):
-        low_performers = ai.get_low_performers(dishes_df)
-        response["title"] = "Dishes to Consider Removing/Repurposing"
-        response["content"] = low_performers[['Dish Name', 'Weekly Orders', 'Primary Waste Ingredient', 'Waste Percentage']]
-        
-    elif match_query(query, ["most wasted", "highest waste", "wasted ingredient", "waste"]):
-        top_waste = ai.get_high_waste_ingredients(ingredients_df)
-        response["title"] = "Most Wasted Ingredients"
-        response["content"] = top_waste[['Ingredient', 'Avg Waste %', 'Frequently Wasted In']]
-        
-    elif match_query(query, ["suggest", "new dish", "recipe", "idea"]):
-        suggestions = ai.suggest_new_dishes(ingredients_df)
-        content = "\n\n".join([f"**{k}**:\n- " + "\n- ".join(v) for k,v in suggestions.items()])
-        response["title"] = "Suggested Waste Reduction Recipes"
-        response["content"] = content
-        
-    elif match_query(query, ["overlap", "common ingredient", "shared", "multiple dishes"]):
-        overlap = ai.get_high_margin_overlap(dishes_df)
-        response["title"] = "High Margin Dishes with Ingredient Overlap"
-        response["content"] = overlap[['Dish Name', 'Profit Margin', 'Ingredients']]
-        
-    elif match_query(query, ["stock less", "reduce stock", "buy less", "inventory advice"]):
-        top_wasted = ingredients_df.sort_values(by="Avg Waste %", ascending=False).head(1).iloc[0]
-        response["title"] = "Stocking Advice"
-        response["content"] = f"📦 Consider buying less of **{top_wasted['Ingredient']}**, which has a high waste rate of **{top_wasted['Avg Waste %']}%**."
-
-    else:
-        response["content"] = (
-            "🤔 I'm not sure how to answer that yet. Try asking things like:\n"
-            "- 'What’s the most wasted ingredient this week?'\n"
-            "- 'Suggest a new dish using ingredients we already have'\n"
-            "- 'Can I remove any dish that’s both low-selling and high-waste?'\n"
-            "- 'What should I stock less of next week?'"
-        )
-    
+def ask_nomora_ai(query):
+    input_text = f"Restaurant assistant: {query}"
+    inputs = tokenizer(input_text, return_tensors="pt", max_length=128, truncation=True)
+    outputs = model.generate(**inputs, max_new_tokens=100)
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return response
 
-# UI Setup
-st.set_page_config(page_title="Nomora AI", page_icon="🍽️", layout="wide")
+# Chatbot
+st.markdown("## 🤖 Ask Nomora AI")
+user_query = st.chat_input("Ask a question about your menu or waste...")
 
-with st.sidebar:
-    st.header("Settings")
-    start_date = st.date_input("Analysis Period Start", datetime.today())
-    end_date = st.date_input("Analysis Period End", datetime.today())
-    st.divider()
-    st.caption("Powered by Nomora AI • v1.0")
+if user_query:
+    user_query = user_query.lower()
 
-st.title("🍽️ Nomora AI - Smart Restaurant Assistant")
-st.write("Reduce food waste and maximize profits through AI-driven insights")
+    with st.chat_message("user"):
+        st.write(user_query)
 
-# Dashboard Section
-tab1, tab2 = st.tabs(["📊 Waste Analytics", "💬 AI Assistant"])
+    with st.chat_message("assistant"):
+        response = ""
 
-with tab1:
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Weekly Orders", dishes_df['Weekly Orders'].sum())
-    with col2:
-        top_waste = ingredients_df.nlargest(1, 'Avg Waste %')
-        st.metric("Highest Waste Ingredient", 
-                 f"{top_waste['Ingredient'].values[0]} ({top_waste['Avg Waste %'].values[0]}%)")
-    with col3:
-        low_performers = NomoraAI().get_low_performers(dishes_df)
-        st.metric("Dishes Needing Attention", len(low_performers))
-    
-    st.divider()
-    
-    col4, col5 = st.columns(2)
-    with col4:
-        st.subheader("Ingredient Waste Breakdown")
-        st.bar_chart(ingredients_df.set_index('Ingredient')['Avg Waste %'])
-    
-    with col5:
-        st.subheader("Dish Performance")
-        st.write("Weekly Orders vs Waste Percentage")
-        st.line_chart(dishes_df.set_index('Dish Name')[['Weekly Orders', 'Waste Percentage']])
+        if user_query in ["hi", "hello", "hey"]:
+            response = "👋 Hey there! Nomora is so delighted to meet you!"
 
-with tab2:
-    st.subheader("Nomora AI Chat")
-    query = st.text_input("Ask a question about your menu...", key="chat_input")
-    
-    if query:
-        ai = NomoraAI()
-        response = handle_query(query.lower(), ai, dishes_df, ingredients_df)
-        
-        with st.chat_message("assistant"):
-            if response["title"]:
-                st.subheader(response["title"])
-            
-            if isinstance(response["content"], pd.DataFrame):
-                st.dataframe(response["content"], hide_index=True)
-            elif isinstance(response["content"], str):
-                st.markdown(response["content"])
-                
-        st.button("Ask Another Question", use_container_width=True)
+        elif "most wasted" in user_query or "high waste" in user_query:
+            top_waste = waste_df.sort_values(by='waste_kg', ascending=False).iloc[0]
+            response = f"🔝 The most wasted ingredient is **{top_waste['ingredient']}**, with **{top_waste['waste_kg']} kg** wasted."
+
+        elif "remove" in user_query or "low orders" in user_query:
+            low_dish = dishes_df.sort_values(by='Weekly Orders').iloc[0]
+            response = f"⚠️ Consider removing **{low_dish['Dish Name']}** – it had just **{low_dish['Weekly Orders']}** orders last week."
+
+        elif "suggest" in user_query or "new dish" in user_query:
+            response = "👩‍🍳 Try creating new dishes using high-waste ingredients like Avocado or Lemon. For example:\n\n- **Avocado Hummus Wrap**\n- **Lemon Herb Pasta**"
+
+        elif "overlap" in user_query or "common ingredient" in user_query:
+            common = dishes_df['Ingredients'].str.split(', ').explode().value_counts().head(1)
+            ingredient = common.index[0]
+            response = f"🔁 The most common ingredient across dishes is **{ingredient}**. Use it wisely to reduce waste."
+
+        elif "profit" in user_query:
+            for _, row in dishes_df.iterrows():
+                if row['Dish Name'].lower() in user_query:
+                    response = f"💰 The profit margin of **{row['Dish Name']}** is **{row['Profit Margin']}**."
+                    break
+            else:
+                response = "I couldn't find that dish. Please check the name and try again."
+
+        elif "shelf life" in user_query:
+            for _, row in waste_df.iterrows():
+                if row['ingredient'].lower() in user_query:
+                    response = f"🧊 The shelf life of **{row['ingredient']}** is **{row['shelf_life']}**."
+                    break
+            else:
+                response = "I couldn't find shelf life info for that ingredient."
+
+        else:
+            response = ask_nomora_ai(user_query)
+
+        st.write(response)
+
+# Footer
+st.markdown("---")
+st.markdown("💡 **Nomora AI** empowers restaurants to cut costs, reduce waste, and reimagine menus with data.")
