@@ -39,32 +39,50 @@ class NomoraAI:
         return {ing: [s.strip() for s in sug.split("; ")] for ing, sug in suggestions.items()}
 
 # Chatbot Logic
+import difflib
+
+# Smart matching helper
+def match_query(query, keywords):
+    return any(any(difflib.get_close_matches(word, query.split(), cutoff=0.7)) for word in keywords)
+
+# Updated chatbot logic
 def handle_query(query, ai, dishes_df, ingredients_df):
     response = {"title": "", "content": "", "visual": None}
     
-    if 'remove' in query:
+    if match_query(query, ["remove", "low-selling", "high-waste", "cut dish"]):
         low_performers = ai.get_low_performers(dishes_df)
         response["title"] = "Dishes to Consider Removing/Repurposing"
         response["content"] = low_performers[['Dish Name', 'Weekly Orders', 'Primary Waste Ingredient', 'Waste Percentage']]
         
-    elif 'wasted' in query:
+    elif match_query(query, ["most wasted", "highest waste", "wasted ingredient", "waste"]):
         top_waste = ai.get_high_waste_ingredients(ingredients_df)
         response["title"] = "Most Wasted Ingredients"
         response["content"] = top_waste[['Ingredient', 'Avg Waste %', 'Frequently Wasted In']]
         
-    elif 'new dishes' in query:
+    elif match_query(query, ["suggest", "new dish", "recipe", "idea"]):
         suggestions = ai.suggest_new_dishes(ingredients_df)
         content = "\n\n".join([f"**{k}**:\n- " + "\n- ".join(v) for k,v in suggestions.items()])
-        response["title"] = "Suggested Waste Reduction Actions"
+        response["title"] = "Suggested Waste Reduction Recipes"
         response["content"] = content
         
-    elif 'overlapping' in query:
+    elif match_query(query, ["overlap", "common ingredient", "shared", "multiple dishes"]):
         overlap = ai.get_high_margin_overlap(dishes_df)
         response["title"] = "High Margin Dishes with Ingredient Overlap"
         response["content"] = overlap[['Dish Name', 'Profit Margin', 'Ingredients']]
         
+    elif match_query(query, ["stock less", "reduce stock", "buy less", "inventory advice"]):
+        top_wasted = ingredients_df.sort_values(by="Avg Waste %", ascending=False).head(1).iloc[0]
+        response["title"] = "Stocking Advice"
+        response["content"] = f"📦 Consider buying less of **{top_wasted['Ingredient']}**, which has a high waste rate of **{top_wasted['Avg Waste %']}%**."
+
     else:
-        response["content"] = "I'm sorry, I didn't understand that question. Please try rephrasing."
+        response["content"] = (
+            "🤔 I'm not sure how to answer that yet. Try asking things like:\n"
+            "- 'What’s the most wasted ingredient this week?'\n"
+            "- 'Suggest a new dish using ingredients we already have'\n"
+            "- 'Can I remove any dish that’s both low-selling and high-waste?'\n"
+            "- 'What should I stock less of next week?'"
+        )
     
     return response
 
